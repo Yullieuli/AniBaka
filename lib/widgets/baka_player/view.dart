@@ -124,6 +124,9 @@ class _BakaPlayerState extends State<BakaPlayer> {
   bool _cursorHidden = false;
   Timer? _cursorHideTimer;
   DateTime? _lastCursorWake;
+  /// 最近一次按下的输入设备，用来区分「鼠标单击暂停」与「触摸单击显隐控制栏」。
+  PointerDeviceKind? _lastPointerKind;
+  DateTime? _lastControlsWake;
 
   // 设备类型判断 - 在 dispose 时需要用到但无法访问 context
   bool _isTablet = false;
@@ -207,6 +210,25 @@ class _BakaPlayerState extends State<BakaPlayer> {
       setState(() => _cursorHidden = true);
     });
   }
+
+  /// 鼠标移动唤出控制栏，3 秒后由 controller 的计时器自动收起。
+  /// 节流到 200ms，避免高频 hover 反复重建计时器。
+  void _revealControls() {
+    if (!Instances.isDesktopPlatform) return;
+    final now = DateTime.now();
+    final last = _lastControlsWake;
+    if (last != null &&
+        now.difference(last) < const Duration(milliseconds: 200)) {
+      return;
+    }
+    _lastControlsWake = now;
+    widget.controller.setControlsVisible(true);
+  }
+
+  /// 鼠标（含触控板）才算「桌面点击」，触摸端保持原来的单击语义。
+  bool get _isMouseInput =>
+      _lastPointerKind == PointerDeviceKind.mouse ||
+      _lastPointerKind == PointerDeviceKind.trackpad;
 
   void _maybeAutoEnterFullscreen() {
     if (widget.full ||
@@ -436,11 +458,17 @@ class _BakaPlayerState extends State<BakaPlayer> {
           cursor: _cursorHidden
               ? SystemMouseCursors.none
               : MouseCursor.defer,
-          onHover: (_) => _revealCursor(),
+          onHover: (_) {
+            _revealCursor();
+            _revealControls();
+          },
           child: Listener(
             behavior: HitTestBehavior.translucent,
             onPointerSignal: _handlePointerSignal,
-            onPointerDown: (_) => _revealCursor(),
+            onPointerDown: (event) {
+              _lastPointerKind = event.kind;
+              _revealCursor();
+            },
             child: player,
           ),
         );
@@ -620,8 +648,22 @@ class _BakaPlayerState extends State<BakaPlayer> {
             autofocus: true,
             onKeyEvent: (node, event) => _handleKeyEvent(event),
             child: GestureDetector(
-              onTap: controller.toggleControls,
+              onTap: () {
+                // 桌面鼠标：单击暂停/播放（与 Animeko 一致）；
+                // 触摸：保持原来的单击显隐控制栏。
+                if (_isMouseInput) {
+                  _playerFocusNode.requestFocus();
+                  controller.togglePlayback();
+                } else {
+                  controller.toggleControls();
+                }
+              },
               onDoubleTapDown: (details) {
+                if (_isMouseInput) {
+                  // 鼠标双击切全屏，和 Animeko 一致。
+                  unawaited(_triggerFullScreen());
+                  return;
+                }
                 _handleDoubleTap(
                   details.localPosition.dx,
                   MediaQuery.sizeOf(context).width,
@@ -745,6 +787,34 @@ class _BakaPlayerState extends State<BakaPlayer> {
         return KeyEventResult.handled;
       } else if (event.logicalKey == LogicalKeyboardKey.space) {
         widget.controller.togglePlayback();
+        return KeyEventResult.handled;
+      } else if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.keyF) {
+        // 与 Animeko / Kazumi 对齐：F 切全屏。
+        unawaited(_triggerFullScreen());
+        return KeyEventResult.handled;
+      } else if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.keyN) {
+        if (widget.hasNextEpisode) {
+          widget.onNextEpisode?.call();
+          return KeyEventResult.handled;
+        }
+      } else if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.keyB) {
+        // B 开关弹幕，和 Animeko 一致。
+        controller.setDanmakuVisible(!controller.overlay.value.showDanmaku);
+        return KeyEventResult.handled;
+      } else if (event is KeyDownEvent &&
+          (event.logicalKey == LogicalKeyboardKey.digit1 ||
+              event.logicalKey == LogicalKeyboardKey.digit2 ||
+              event.logicalKey == LogicalKeyboardKey.digit3)) {
+        // 1 / 2 / 3 直接跳倍速，两家都有。
+        final rate = event.logicalKey == LogicalKeyboardKey.digit1
+            ? 1.0
+            : event.logicalKey == LogicalKeyboardKey.digit2
+            ? 2.0
+            : 3.0;
+        unawaited(controller.setRate(rate));
         return KeyEventResult.handled;
       }
     } else if (event is KeyUpEvent &&

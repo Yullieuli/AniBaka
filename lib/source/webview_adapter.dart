@@ -478,6 +478,14 @@ abstract final class WebViewAdapter {
             }
             await controller.stop();
             await controller.loadStringContent(_blankPage);
+            // 这个 WebView 没有挂到任何 widget 上，Windows 下 initialize()
+            // 会留下一个可见的顶层窗口盖在桌面上——点击被吃掉且无法激活。
+            // 探测结束就销毁，下一次任务重新创建（多几百毫秒，换来桌面干净）。
+            if (Platform.isWindows &&
+                identical(_desktopController, controller)) {
+              _desktopController = null;
+              unawaited(controller.dispose());
+            }
           };
           js = _evaluator(controller.executeScript);
           await controller.setUserAgent(userAgent);
