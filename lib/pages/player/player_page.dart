@@ -23,6 +23,7 @@ import 'package:baka/services/matching/match_memory_service.dart';
 import 'package:baka/services/playback/danmaku_controller.dart';
 import 'package:baka/services/playback/history_repository.dart';
 import 'package:baka/services/playback/media_session.dart';
+import 'package:baka/services/playback/pending_episode_marks.dart';
 import 'package:baka/services/playback/playback_content.dart';
 import 'package:baka/services/playback/playback_progress.dart';
 import 'package:baka/services/playback/watch_party.dart';
@@ -495,6 +496,7 @@ class _PlayerPageState extends State<PlayerPage>
         bgmId: bgmId,
         cover: content.coverImageUrl,
         bgmEpisodeSortOf: () => content.currentBgmEpisodeSort,
+        totalEpisodes: content.bgmEpisodeCount,
       );
       await ctr.open(
         url,
@@ -833,6 +835,14 @@ class _PlayerPageState extends State<PlayerPage>
       );
       if (!ok) showSnackBar('Bangumi 上没有第 $number 集，只记在本地', isError: true);
     } catch (error) {
+      // 本地已经写过了，排进补推队列，下次有网再传。
+      unawaited(
+        PendingEpisodeMarks.add(
+          bangumiSession.preferences,
+          subjectId,
+          number,
+        ),
+      );
       showSnackBar('Bangumi 同步失败，已记在本地：$error', isError: true);
     }
   }
@@ -916,6 +926,10 @@ class _PlayerPageState extends State<PlayerPage>
           showSnackBar(
             status == null ? '已取消收藏' : '已标记为「${status.label}」',
           );
+          // 整部标成看过时，顺手问一句要不要把剧集也补齐。
+          if (status == CollectionStatus.collect) {
+            unawaited(_offerMarkAllEpisodes());
+          }
         }
       } catch (e) {
         if (mounted) {
@@ -928,8 +942,83 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  void _onCommentLink(String _, String? url, String _) => handleCommentLinkTap(
-    url,
+  /// 设为「看过」后问一次：要不要把剩下的剧集也一起标掉。
+  Future<void> _offerMarkAllEpisodes() async {
+    final total = _content.videoList.length;
+    if (total <= 1) return;
+    final watched = HistoryRepository.watchedCountForBgm(
+      _content.bgmInfo.subjectId ?? 0,
+    );
+    if (watched >= total) return;
+    final markAll = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('同时标记所有剧集？'),
+        content: Text('要把这部的 $total 集都标记为看过吗？选「只改状态」会保留现在的已看记录。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('只改状态'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('全部标记'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || markAll != true) return;
+    await _markAllEpisodesWatched();
+  }
+
+  /// 本地一次写全，Bangumi 放后台逐集补报，中途失败不影响本地。
+  Future<void> _markAllEpisodesWatched() async {
+    final total = _content.videoList.length;
+    final subjectId = _content.bgmInfo.subjectId;
+    for (var i = 0; i < total; i++) {
+      await historyRepository.setEpisodeWatched(
+        _content.watchedVideoId,
+        i,
+        true,
+        bgmId: subjectId,
+      );
+    }
+    if (mounted) showSnackBar('已把 $total 集标记为看过');
+    if (subjectId != null && bangumiSession.isConnected) {
+      unawaited(_syncAllEpisodesToBangumi(subjectId, total));
+    }
+  }
+
+  Future<void> _syncAllEpisodesToBangumi(int subjectId, int total) async {
+    var failed = 0;
+    for (var i = 0; i < total; i++) {
+      final number = _content.bgmEpisodeSortAt(i);
+      if (number == null) continue;
+      try {
+        await bangumiSession.setEpisodeWatched(
+          subjectId: subjectId,
+          episodeNumber: number,
+          watched: true,
+        );
+        // 别把 Bangumi 打得太急，留出间隔。
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      } catch (_) {
+        failed++;
+        unawaited(
+          PendingEpisodeMarks.add(
+            bangumiSession.preferences,
+            subjectId,
+            number,
+          ),
+        );
+      }
+    }
+    if (failed > 0 && mounted) {
+      showSnackBar('有 $failed 集没同步到 Bangumi，已记在本地', isError: true);
+    }
+  }
+
+  void _onCommentLink(String _, String? url, String _) => handleCommentLinkTap(    url,
     controller: ctr,
     currentIndex: _content.currPlayIndex,
     episodeCount: _content.videoList.length,

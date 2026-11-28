@@ -11,39 +11,62 @@ import 'package:flutter/services.dart';
 /// 播放页里打开的番剧详情：完整的详情页放在底部面板里，
 /// 出场方式和选集弹窗一致，点暗处、Esc、右上角都能收起。
 /// [page] 拿到关闭面板的方法，选集、换源前先关面板。
+///
+/// 宽屏（≥900）纯淡入，窄屏从底部滑入并淡入——宽屏整块位移会晃眼。
 Future<void> showAnimeDetailSheet(
   BuildContext context, {
   required Widget Function(BuildContext context, VoidCallback close) page,
-}) {
-  final duration = MediaQuery.disableAnimationsOf(context)
+}) async {
+  final size = MediaQuery.sizeOf(context);
+  final wide = size.width >= 900;
+  final reduceMotion = MediaQuery.disableAnimationsOf(context);
+  final duration = reduceMotion
       ? Duration.zero
-      : const Duration(milliseconds: 280);
-  // 弹出方式和选集一致：底部升起、顶部圆角 20、最高 80%。
-  // 详情页弹窗占窗口 80%，两侧露出播放页。
-  return showModalBottomSheet<void>(
+      : Duration(milliseconds: wide ? 200 : 280);
+
+  await showGeneralDialog<void>(
     context: context,
-    isScrollControlled: true,
-    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    clipBehavior: Clip.antiAlias,
-    constraints: BoxConstraints(
-      maxWidth: MediaQuery.sizeOf(context).width * 0.8,
-    ),
-    sheetAnimationStyle: AnimationStyle(
-      duration: duration,
-      reverseDuration: duration,
-    ),
-    builder: (sheetContext) {
-      void close() => Navigator.of(sheetContext).pop();
-      return SizedBox(
-        key: const ValueKey('animeDetailSheet'),
-        height: MediaQuery.sizeOf(sheetContext).height * 0.8,
-        child: _DetailSheetSurface(
-          onClose: close,
-          page: page(sheetContext, close),
+    barrierDismissible: true,
+    barrierLabel: '关闭番剧详情',
+    barrierColor: Colors.black54,
+    transitionDuration: duration,
+    pageBuilder: (dialogContext, _, _) {
+      void close() => Navigator.of(dialogContext).pop();
+      return Align(
+        alignment: Alignment.bottomCenter,
+        child: SizedBox(
+          width: size.width * 0.8,
+          height: size.height * 0.8,
+          child: Material(
+            key: const ValueKey('animeDetailSheet'),
+            color: Theme.of(dialogContext).scaffoldBackgroundColor,
+            clipBehavior: Clip.antiAlias,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: _DetailSheetSurface(
+              onClose: close,
+              page: page(dialogContext, close),
+            ),
+          ),
         ),
+      );
+    },
+    transitionBuilder: (dialogContext, animation, _, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      final faded = FadeTransition(opacity: curved, child: child);
+      if (wide) return faded;
+      return SlideTransition(
+        // 只抬 6%，配合淡入，避免整块面板大幅位移。
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.06),
+          end: Offset.zero,
+        ).animate(curved),
+        child: faded,
       );
     },
   );
@@ -268,6 +291,11 @@ class _EpisodeCardState extends State<_EpisodeCard> {
       legacyVideoId: '${content.data['id']}',
       bgmId: content.bgmInfo.subjectId,
     );
+    // 进度条只按当前源的播放入口统计；换源后靠已看标记兜底。
+    final playProgress = HistoryRepository.episodePlayProgress(
+      '${content.data['id']}',
+      index,
+    );
     final borderColor = isPlaying
         ? theme.colorScheme.primary
         : theme.colorScheme.outlineVariant.withValues(alpha: 0.6);
@@ -322,6 +350,21 @@ class _EpisodeCardState extends State<_EpisodeCard> {
                           child: _EpisodeBadge(
                             icon: Icons.play_arrow_rounded,
                             accent: true,
+                          ),
+                        ),
+                      // 看了一半的集在封面底边留一条进度，已经看完的不再画。
+                      if (!watched && playProgress != null && playProgress > 0.01)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: playProgress.clamp(0.0, 1.0),
+                            child: Container(
+                              height: 3,
+                              color: theme.colorScheme.primary,
+                            ),
                           ),
                         ),
                     ],

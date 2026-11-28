@@ -12,6 +12,7 @@ import 'package:baka/core/account_session.dart';
 import 'package:baka/core/app_storage.dart';
 import 'package:baka/models/play_history.dart';
 import 'package:baka/services/account/bangumi_session.dart';
+import 'package:baka/services/playback/pending_episode_marks.dart';
 
 /// 播放历史同步服务
 late HistoryRepository historyRepository;
@@ -228,6 +229,8 @@ class HistoryRepository {
   }
 
   Future<void> syncRemoteToLocal() async {
+    // 先把上次没传成功的「看过」补上，别让远端刷新把本地记录盖回去。
+    unawaited(flushPendingEpisodeMarks());
     try {
       final response = await AniBakaApi.getPlayHistory(
         pageSize: _maxHistoryCount,
@@ -285,6 +288,8 @@ class HistoryRepository {
     String? cover,
     int? bgmId,
     int? bgmEpisodeSort,
+    /// Bangumi 条目本篇总集数；用来判断整部是否已经看完。
+    int? totalEpisodes,
   }) async {
     if (durationMs <= 0 || positionMs < 0) return;
 
@@ -309,6 +314,8 @@ class HistoryRepository {
       'watchTime': DateTime.now().millisecondsSinceEpoch,
       'url': urlIndex,
       'isFinished': positionMs / durationMs >= _completionThreshold,
+      if (totalEpisodes != null && totalEpisodes > 0)
+        'totalEpisodes': totalEpisodes,
     };
 
     final key = _localKey(record);
@@ -356,13 +363,42 @@ class HistoryRepository {
             .markEpisodeWatched(subjectId: subjectId, episodeNumber: sort)
             .catchError((Object error, StackTrace stackTrace) {
               Log.w('History', '更新 Bangumi 集数失败: $error');
+              // 本地已经记下了，把这一集排进补推队列，下次有网再传。
+              unawaited(
+                PendingEpisodeMarks.add(bangumi.preferences, subjectId, sort),
+              );
             }),
       );
     }
   }
 
+  /// 把之前上报失败的「看过」补推一遍；失败的留到下次。
+  Future<int> flushPendingEpisodeMarks() => PendingEpisodeMarks.flush(bangumi);
+
   static String _watchedKey(String videoId, int episodeIndex) =>
       '${videoId}_${episodeIndex}_watched';
+
+  /// 单集观看进度 0..1，用于选集卡片底部的进度条。
+  /// 同一集换过源时取最靠后的一条；没有记录或时长未知时返回 null。
+  static double? episodePlayProgress(
+    String videoId,
+    int episodeIndex, {
+    String? legacyVideoId,
+  }) {
+    final ids = legacyVideoId == null || legacyVideoId == videoId
+        ? <String>[videoId]
+        : <String>[videoId, legacyVideoId];
+    double? best;
+    for (final id in ids) {
+      final item = _furthestProgress(id, episodeIndex);
+      final position = toInt(item?['positionMs']) ?? 0;
+      final duration = toInt(item?['durationMs']) ?? 0;
+      if (position <= 0 || duration <= 0) continue;
+      final ratio = (position / duration).clamp(0.0, 1.0);
+      if (best == null || ratio > best) best = ratio;
+    }
+    return best;
+  }
 
   /// 这一集是否算看过。[legacyVideoId] 是换源前的源 id，用来兼容旧标记。
   /// 传入 [bgmId] 时与追番列表共用同一份索引，别的源看过也算看过。

@@ -12,6 +12,7 @@ class PlaybackProgress {
     this.bgmId,
     this.cover,
     this.bgmEpisodeSortOf,
+    this.totalEpisodes,
   }) : request = request.copyWith(),
        _pendingStart = start;
 
@@ -20,6 +21,9 @@ class PlaybackProgress {
   final String videoKey;
   final int? bgmId;
   final String? cover;
+
+  /// Bangumi 条目本篇总集数；写进历史用于判断整部是否看完。
+  final int? totalEpisodes;
 
   /// 这一集在 Bangumi 分集列表里的 `sort`；为 null 时不上报。由回调提供。
   final int? Function()? bgmEpisodeSortOf;
@@ -67,6 +71,7 @@ class PlaybackProgress {
           bgmId: bgmId,
           cover: cover,
           bgmEpisodeSort: bgmEpisodeSortOf?.call(),
+          totalEpisodes: totalEpisodes,
         ),
     ]).then<void>((_) {});
     _lastSave = snapshot;

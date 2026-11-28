@@ -11,6 +11,7 @@ class ContinueWatchingEntry {
     required this.watchedAt,
     required this.progress,
     required this.isFinished,
+    this.totalEpisodes,
   });
 
   /// 聚合用的番剧标识，同 key 只会保留最近的一条记录。
@@ -30,6 +31,17 @@ class ContinueWatchingEntry {
 
   /// 这一集是否已经看完（进度过了完成阈值）。
   final bool isFinished;
+
+  /// Bangumi 本篇总集数；旧记录没有这个字段，按未知处理。
+  final int? totalEpisodes;
+
+  /// 整部已经看完：最后一集看完后没有下一集了。
+  /// 总集数未知时一律当没看完，避免把在追的番误判到列表末尾。
+  bool get seriesFinished {
+    final total = totalEpisodes;
+    if (total == null || total <= 0) return false;
+    return isFinished && targetEpisodeIndex >= total;
+  }
 
   String get title => record['title']?.toString() ?? '';
 
@@ -72,6 +84,7 @@ List<ContinueWatchingEntry> buildContinueWatching(
       watchedAt: toInt(record['watchTime']) ?? 0,
       progress: (position / duration).clamp(0.0, 1.0),
       isFinished: record['isFinished'] == true,
+      totalEpisodes: toInt(record['totalEpisodes']),
     );
     final existing = latest[entry.key];
     if (existing == null || entry.watchedAt > existing.watchedAt) {
@@ -80,7 +93,13 @@ List<ContinueWatchingEntry> buildContinueWatching(
   }
 
   final entries = latest.values.toList()
-    ..sort((a, b) => b.watchedAt.compareTo(a.watchedAt));
+    ..sort((a, b) {
+      // 整部看完的沉到最后，继续观看只留还有得看的。
+      if (a.seriesFinished != b.seriesFinished) {
+        return a.seriesFinished ? 1 : -1;
+      }
+      return b.watchedAt.compareTo(a.watchedAt);
+    });
   return entries.take(limit).toList(growable: false);
 }
 

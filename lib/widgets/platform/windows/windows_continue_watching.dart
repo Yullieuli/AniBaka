@@ -68,9 +68,12 @@ class WindowsContinueWatching extends StatelessWidget {
               .where((entry) => entry.record['nsfw'] != true)
               .toList(growable: false)
         : all;
-    // 今天有新一集排在前面，其余按最近观看时间。
+    // 今天有新一集排在前面；整部看完的沉到最后；其余按最近观看时间。
     final sorted = [...visible];
     sorted.sort((a, b) {
+      if (a.seriesFinished != b.seriesFinished) {
+        return a.seriesFinished ? 1 : -1;
+      }
       final aUpdated = _isUpdatedToday(a);
       final bUpdated = _isUpdatedToday(b);
       if (aUpdated != bUpdated) return aUpdated ? -1 : 1;

@@ -605,6 +605,11 @@ class _EpisodeListDialogState extends State<EpisodeListDialog> {
       label: _episodeLabel(index, widget.videoList[index].title),
       selected: index == widget.currentIndex,
       watched: _isWatched(index),
+      progress: HistoryRepository.episodePlayProgress(
+        widget.videoId,
+        index,
+        legacyVideoId: widget.legacyVideoId,
+      ),
       still: bgmId == null || bgmId <= 0
           ? null
           : AniBakaApi.getEpisodeStills(
@@ -665,6 +670,11 @@ class _EpisodeListDialogState extends State<EpisodeListDialog> {
       rawTitle: rawTitle,
       isSelected: index == widget.currentIndex,
       isWatched: _isWatched(index),
+      progress: HistoryRepository.episodePlayProgress(
+        widget.videoId,
+        index,
+        legacyVideoId: widget.legacyVideoId,
+      ),
       textColor: textColor,
       onTap: () => Navigator.pop(context, index),
       onLongPress: widget.onSetEpisodeWatched == null
@@ -687,12 +697,15 @@ class _EpisodeCard extends StatefulWidget {
     required this.accent,
     required this.onTap,
     required this.onLongPress,
+    this.progress,
   });
 
   final String number;
   final String label;
   final bool selected;
   final bool watched;
+  /// 观看进度 0..1；已看完的集不画。
+  final double? progress;
   final Future<Map<String, dynamic>?>? still;
   final String? cover;
   final Color base;
@@ -875,6 +888,20 @@ class _EpisodeCardState extends State<_EpisodeCard>
                           size: 12,
                           color: Colors.white,
                         ),
+                      ),
+                    ),
+                  // 看了一半的集在卡片底边留一条进度，已经看完的不再画。
+                  if (!widget.watched &&
+                      widget.progress != null &&
+                      widget.progress! > 0.01)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: widget.progress!.clamp(0.0, 1.0),
+                        child: Container(height: 3, color: widget.accent),
                       ),
                     ),
                   if (widget.selected)

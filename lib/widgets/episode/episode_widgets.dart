@@ -14,6 +14,8 @@ class EpisodeItem extends StatelessWidget {
   final String rawTitle;
   final bool isSelected;
   final bool isWatched;
+  /// 这一集的观看进度 0..1；null 表示没有记录。已看完的集不再画进度条。
+  final double? progress;
   final bool isDownloadMode;
   final bool isQueued;
   final bool isDownloadSelected;
@@ -27,6 +29,7 @@ class EpisodeItem extends StatelessWidget {
     super.key,
     this.isSelected = false,
     this.isWatched = false,
+    this.progress,
     this.isDownloadMode = false,
     this.isQueued = false,
     this.isDownloadSelected = false,
@@ -52,65 +55,94 @@ class EpisodeItem extends StatelessWidget {
         ? accent
         : base.withValues(alpha: isWatched ? 0.35 : 0.85);
 
+    // 已看完或正在播放的集不画进度条，避免和选中态抢注意力。
+    final ratio = progress;
+    final showProgress =
+        !highlighted && !isWatched && ratio != null && ratio > 0.01;
+
     return Material(
       color: highlighted
           ? accent.withValues(alpha: 0.12)
           : base.withValues(alpha: 0.06),
       borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: (isDownloadMode && isQueued) ? null : onTap,
         onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    (index + 1).toString().padLeft(2, '0'),
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: title.isEmpty ? 15 : 12,
-                      fontWeight: highlighted
-                          ? FontWeight.w700
-                          : FontWeight.w500,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        (index + 1).toString().padLeft(2, '0'),
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: title.isEmpty ? 15 : 12,
+                          fontWeight: highlighted
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      if (highlighted) ...[
+                        const SizedBox(width: 3),
+                        Icon(
+                          isDownloadMode
+                              ? Icons.check_rounded
+                              : Icons.play_arrow_rounded,
+                          size: 13,
+                          color: foreground,
+                        ),
+                      ] else if (isWatched) ...[
+                        const SizedBox(width: 3),
+                        Icon(
+                          Icons.done_rounded,
+                          size: 12,
+                          color: base.withValues(alpha: 0.45),
+                        ),
+                      ],
+                    ],
                   ),
-                  if (highlighted) ...[
-                    const SizedBox(width: 3),
-                    Icon(
-                      isDownloadMode
-                          ? Icons.check_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 13,
-                      color: foreground,
+                  if (title.isNotEmpty)
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: foreground.withValues(alpha: 0.7),
+                        fontSize: 10,
+                      ),
                     ),
-                  ] else if (isWatched) ...[
-                    const SizedBox(width: 3),
-                    Icon(
-                      Icons.done_rounded,
-                      size: 12,
-                      color: base.withValues(alpha: 0.45),
-                    ),
-                  ],
                 ],
               ),
-              if (title.isNotEmpty)
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: foreground.withValues(alpha: 0.7),
-                    fontSize: 10,
+            ),
+            if (showProgress)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: ratio.clamp(0.0, 1.0),
+                  child: Container(
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.8),
+                      borderRadius: const BorderRadius.horizontal(
+                        right: Radius.circular(2),
+                      ),
+                    ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
@@ -233,6 +265,11 @@ Widget buildWindowsEpisodeList({
               legacyVideoId: legacyVideoId,
               bgmId: bgmId,
             ),
+            progress: HistoryRepository.episodePlayProgress(
+              videoId,
+              index,
+              legacyVideoId: legacyVideoId,
+            ),
             onTap: () => onEpisodeChanged(index),
           );
         },
@@ -271,6 +308,11 @@ Widget buildHorizontalEpisodeList({
               index,
               legacyVideoId: legacyVideoId,
               bgmId: bgmId,
+            ),
+            progress: HistoryRepository.episodePlayProgress(
+              videoId,
+              index,
+              legacyVideoId: legacyVideoId,
             ),
             onTap: () => onEpisodeChanged(index),
           ),

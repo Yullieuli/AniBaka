@@ -111,6 +111,11 @@ class _WindowsEpisodeListState extends State<WindowsEpisodeList> {
           bgmId: content.bgmInfo.subjectId,
         );
         if (_isGridView) {
+          // 进度按源 id 找；watchedVideoId 可能指向 Bangumi 桶，取不到分集进度。
+          final progress = HistoryRepository.episodePlayProgress(
+            legacyVideoId,
+            i,
+          );
           return Material(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(6),
@@ -118,55 +123,73 @@ class _WindowsEpisodeListState extends State<WindowsEpisodeList> {
               onTap: () => widget.onEpisodeSelected(i),
               onLongPress: _markHandler(i, watched),
               borderRadius: BorderRadius.circular(6),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                decoration: BoxDecoration(
-                  color: isPlaying
-                      ? primaryColor.withValues(alpha: 0.18)
-                      : const Color(0xFF1B1B1F),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: isPlaying
-                        ? primaryColor.withValues(alpha: 0.6)
-                        : Colors.white10,
-                    width: 0.8,
-                  ),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                alignment: Alignment.center,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (watched && !isPlaying) ...[
-                      const Icon(
-                        Icons.done_rounded,
-                        size: 12,
-                        color: Colors.white38,
-                      ),
-                      const SizedBox(width: 3),
-                    ],
-                    Flexible(
-                      child: Text(
-                        item.title,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontWeight: isPlaying
-                              ? FontWeight.bold
-                              : FontWeight.w500,
-                          fontSize: 12.5,
-                          color: isPlaying
-                              ? primaryColor
-                              : watched
-                              ? Colors.white38
-                              : Colors.white70,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+              child: Stack(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    curve: Curves.easeOutCubic,
+                    decoration: BoxDecoration(
+                      color: isPlaying
+                          ? primaryColor.withValues(alpha: 0.18)
+                          : const Color(0xFF1B1B1F),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: isPlaying
+                            ? primaryColor.withValues(alpha: 0.6)
+                            : Colors.white10,
+                        width: 0.8,
                       ),
                     ),
-                  ],
-                ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 6,
+                    ),
+                    alignment: Alignment.center,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (watched && !isPlaying) ...[
+                          const Icon(
+                            Icons.done_rounded,
+                            size: 12,
+                            color: Colors.white38,
+                          ),
+                          const SizedBox(width: 3),
+                        ],
+                        Flexible(
+                          child: Text(
+                            item.title,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontWeight: isPlaying
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                              fontSize: 12.5,
+                              color: isPlaying
+                                  ? primaryColor
+                                  : watched
+                                  ? Colors.white38
+                                  : Colors.white70,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!watched && progress != null && progress > 0.01)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: progress.clamp(0.0, 1.0),
+                        child: Container(height: 3, color: primaryColor),
+                      ),
+                    ),
+                ],
               ),
             ),
           );
