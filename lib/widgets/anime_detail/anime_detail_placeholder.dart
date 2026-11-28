@@ -520,14 +520,14 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
   );
 
   List<(String title, WidgetBuilder builder)> _buildTabs(bool isWide) {
+    final subjectId = _subjectId;
     final tabs = <(String title, WidgetBuilder builder)>[
       (
         '概览',
         (_) {
           final summary = _buildSummarySection(_detail.summary);
-          return _wrapTabContent(
-            isWide
-                ? Row(
+          final overview = isWide
+              ? Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(flex: 2, child: summary),
@@ -578,25 +578,28 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
                           ? const SizedBox.shrink()
                           : _buildGenresSection(_detail.genres),
                     ],
+                  );
+
+          // Animeko 把选集直接铺在详情页里，不藏成独立分页。
+          // 播放页的详情面板顶部已有选集条，那边不重复放。
+          return _wrapTabContent(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                overview,
+                if (subjectId != null && widget.headerSliver == null) ...[
+                  const SizedBox(height: 28),
+                  AnimeDetailEpisodes(
+                    subjectId: subjectId,
+                    onEpisodeTap: _startFromEpisode,
                   ),
+                ],
+              ],
+            ),
           );
         },
       ),
     ];
-
-    final subjectId = _subjectId;
-    // 播放页的详情面板顶部已有选集条，这里只在独立详情页出现。
-    if (subjectId != null && widget.headerSliver == null) {
-      tabs.add((
-        '选集',
-        (_) => _wrapTabContent(
-          AnimeDetailEpisodes(
-            subjectId: subjectId,
-            onEpisodeTap: _startFromEpisode,
-          ),
-        ),
-      ));
-    }
 
     tabs.add((
       '评论',

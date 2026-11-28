@@ -472,19 +472,22 @@ abstract final class WebViewAdapter {
           };
           Future<String?>? sniffer;
           reset = () async {
-            await controller.executeScript(_staleScript);
-            if (await sniffer case final id?) {
-              await controller.removeScriptToExecuteOnDocumentCreated(id);
-            }
-            await controller.stop();
-            await controller.loadStringContent(_blankPage);
-            // 这个 WebView 没有挂到任何 widget 上，Windows 下 initialize()
-            // 会留下一个可见的顶层窗口盖在桌面上——点击被吃掉且无法激活。
-            // 探测结束就销毁，下一次任务重新创建（多几百毫秒，换来桌面干净）。
-            if (Platform.isWindows &&
-                identical(_desktopController, controller)) {
-              _desktopController = null;
-              unawaited(controller.dispose());
+            try {
+              await controller.executeScript(_staleScript);
+              if (await sniffer case final id?) {
+                await controller.removeScriptToExecuteOnDocumentCreated(id);
+              }
+              await controller.stop();
+              await controller.loadStringContent(_blankPage);
+            } finally {
+              // 这个 WebView 没有挂到任何 widget 上，Windows 下 initialize()
+              // 会留下一个可见的顶层窗口盖在桌面上——点击被吃掉且无法激活。
+              // 不管复位哪一步失败，都必须销毁；下一次任务重新创建。
+              if (Platform.isWindows &&
+                  identical(_desktopController, controller)) {
+                _desktopController = null;
+                unawaited(controller.dispose());
+              }
             }
           };
           js = _evaluator(controller.executeScript);

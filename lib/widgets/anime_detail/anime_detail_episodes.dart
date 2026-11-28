@@ -4,14 +4,16 @@ import 'package:baka/services/playback/airing_status.dart';
 import 'package:baka/services/playback/history_repository.dart';
 import 'package:flutter/material.dart';
 
-/// 详情页的选集列表：直接读 Bangumi 本篇分集，点哪一集就从哪一集开始匹配源。
+/// 详情页的选集区，对齐 Animeko：直接铺在概览里，不藏在分页后面。
 ///
-/// 和播放页里的 [PlayerDetailEpisodes] 不同，这里没有已选中的源，
-/// 所以只按 Bangumi 集号排序，点击后交给播放器重新匹配。
+/// - 标题旁给出真实放送状态（今日更新 / 下周六更新 / 已完结），来自分集 airdate；
+/// - 一页 8 集，超过一页给翻页控件，避免长篇把详情页拉得很长；
+/// - 点某一集就从这一集重新匹配源，没这一集的源会被跳过。
 class AnimeDetailEpisodes extends StatefulWidget {
   const AnimeDetailEpisodes({
     required this.subjectId,
     required this.onEpisodeTap,
+    this.pageSize = 8,
     super.key,
   });
 
@@ -19,6 +21,7 @@ class AnimeDetailEpisodes extends StatefulWidget {
 
   /// 参数是分集在本篇列表里的下标（0 起算），播放器按它对齐目标集。
   final ValueChanged<int> onEpisodeTap;
+  final int pageSize;
 
   @override
   State<AnimeDetailEpisodes> createState() => _AnimeDetailEpisodesState();
@@ -26,6 +29,7 @@ class AnimeDetailEpisodes extends StatefulWidget {
 
 class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
   late Future<List<Map<String, dynamic>>> _episodes = _load();
+  int _page = 0;
 
   Future<List<Map<String, dynamic>>> _load() async {
     try {
@@ -41,6 +45,7 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.subjectId != widget.subjectId) {
       _episodes = _load();
+      _page = 0;
     }
   }
 
@@ -53,13 +58,13 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 48),
+            padding: EdgeInsets.symmetric(vertical: 32),
             child: Center(child: CircularProgressIndicator()),
           );
         }
         if (snapshot.hasError) {
           return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 40),
+            padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(
               child: TextButton(
                 onPressed: () => setState(() => _episodes = _load()),
@@ -71,15 +76,26 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
         final episodes = snapshot.data ?? const <Map<String, dynamic>>[];
         if (episodes.isEmpty) {
           return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 40),
+            padding: EdgeInsets.symmetric(vertical: 24),
             child: Center(child: Text('暂无分集信息')),
           );
         }
 
-        final watched = [
+        final watchedIndexes = <int>[
           for (var i = 0; i < episodes.length; i++)
             if (HistoryRepository.watchedAt(widget.subjectId, i)) i,
-        ].length;
+        ];
+        final facts = buildAiringFacts(episodes);
+        final lastWatchedSort = watchedIndexes.isEmpty
+            ? null
+            : _sortOf(episodes[watchedIndexes.last]);
+        final status = describeAiring(facts, watchedSort: lastWatchedSort);
+        final statusText = status.hint ?? status.badge;
+
+        final pageCount = (episodes.length / widget.pageSize).ceil();
+        final page = _page.clamp(0, pageCount - 1);
+        final start = page * widget.pageSize;
+        final end = (start + widget.pageSize).clamp(0, episodes.length);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,27 +103,63 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
             Row(
               children: [
                 Text(
-                  '共 ${episodes.length} 集',
+                  '选集',
                   style: TextStyle(
-                    fontSize: 13,
-                    color: colors.onSurfaceVariant,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: colors.onSurface,
                   ),
                 ),
-                const Spacer(),
-                if (watched > 0)
+                if (statusText != null) ...[
+                  const SizedBox(width: 10),
                   Text(
-                    '已看 $watched / ${episodes.length}',
+                    statusText,
                     style: TextStyle(
                       fontSize: 13,
+                      color: status.badge != null
+                          ? colors.primary
+                          : colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                if (watchedIndexes.isNotEmpty)
+                  Text(
+                    '已看 ${watchedIndexes.length} / ${episodes.length}',
+                    style: TextStyle(
+                      fontSize: 12,
                       color: colors.onSurfaceVariant,
                     ),
                   ),
+                if (pageCount > 1) ...[
+                  const SizedBox(width: 12),
+                  _PageButton(
+                    icon: Icons.chevron_left_rounded,
+                    enabled: page > 0,
+                    onPressed: () => setState(() => _page = page - 1),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: Text(
+                      '${start + 1}–$end / ${episodes.length}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  _PageButton(
+                    icon: Icons.chevron_right_rounded,
+                    enabled: page < pageCount - 1,
+                    onPressed: () => setState(() => _page = page + 1),
+                  ),
+                ],
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             LayoutBuilder(
               builder: (context, constraints) {
-                final columns = (constraints.maxWidth / 260).floor().clamp(1, 4);
+                final columns = (constraints.maxWidth / 240).floor().clamp(1, 4);
                 return GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -118,27 +170,23 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
                     crossAxisSpacing: 10,
                     mainAxisExtent: 62,
                   ),
-                  itemCount: episodes.length,
-                  itemBuilder: (context, index) {
+                  itemCount: end - start,
+                  itemBuilder: (context, offset) {
+                    final index = start + offset;
                     final episode = episodes[index];
-                    final sort = episode['sort'];
-                    final label = sort is num
+                    final sort = _sortOf(episode);
+                    final label = sort != null
                         ? formatEpisodeSort(sort).padLeft(2, '0')
                         : '${index + 1}'.padLeft(2, '0');
                     final title =
                         _text(episode['name_cn']) ??
                         _text(episode['name']) ??
                         '第 $label 话';
-                    final date = _shortDate(episode['airdate']);
-                    final isWatched = HistoryRepository.watchedAt(
-                      widget.subjectId,
-                      index,
-                    );
                     return _EpisodeTile(
                       label: label,
                       title: title,
-                      date: date,
-                      watched: isWatched,
+                      date: _shortDate(episode['airdate']),
+                      watched: watchedIndexes.contains(index),
                       onTap: () => widget.onEpisodeTap(index),
                       cardColor: isDark
                           ? Colors.white.withValues(alpha: 0.05)
@@ -157,6 +205,11 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
     );
   }
 
+  static num? _sortOf(Map<String, dynamic> episode) {
+    final sort = episode['sort'];
+    return sort is num ? sort : null;
+  }
+
   static String? _text(Object? value) {
     final text = value?.toString().trim();
     return text == null || text.isEmpty ? null : text;
@@ -167,6 +220,32 @@ class _AnimeDetailEpisodesState extends State<AnimeDetailEpisodes> {
     final match = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(raw.trim());
     if (match == null) return null;
     return '${match.group(2)!.padLeft(2, '0')}/${match.group(3)!.padLeft(2, '0')}';
+  }
+}
+
+class _PageButton extends StatelessWidget {
+  const _PageButton({
+    required this.icon,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return IconButton(
+      icon: Icon(icon, size: 20),
+      onPressed: enabled ? onPressed : null,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+      visualDensity: VisualDensity.compact,
+      color: colors.onSurfaceVariant,
+      disabledColor: colors.onSurfaceVariant.withValues(alpha: 0.3),
+    );
   }
 }
 
