@@ -2,7 +2,6 @@ import 'package:baka/core/app_logger.dart';
 import 'package:baka/core/content_filter.dart';
 import 'package:baka/models/bgm.dart';
 import 'package:baka/utils/json_values.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -25,6 +24,7 @@ import 'package:baka/widgets/anime_detail/character_detail_sheet.dart';
 import 'package:baka/widgets/anime_detail/anime_detail_header.dart';
 import 'package:baka/widgets/anime_detail/anime_detail_background.dart';
 import 'package:baka/widgets/anime_detail/anime_detail_comments.dart';
+import 'package:baka/widgets/anime_detail/anime_detail_episodes.dart';
 import 'package:baka/widgets/anime_detail/anime_detail_related.dart';
 
 class AnimeDetailPlaceholder extends StatefulWidget {
@@ -47,6 +47,9 @@ class AnimeDetailPlaceholder extends StatefulWidget {
   /// 播放按钮上的字，默认「开始观看」。
   final String searchLabel;
 
+  /// 嵌在搜索页右侧时用它收起详情；为 null 时走普通的返回。
+  final VoidCallback? onClose;
+
   const AnimeDetailPlaceholder({
     required this.data,
     this.heroTag,
@@ -55,6 +58,7 @@ class AnimeDetailPlaceholder extends StatefulWidget {
     this.onSearchTap,
     this.onRelatedTap,
     this.searchLabel = '开始观看',
+    this.onClose,
     super.key,
   });
 
@@ -136,6 +140,23 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
       },
     );
     if (widget.episodeIndex case final index?) request.episodeIndex = index;
+    NavigationService.toPlayback(context, request);
+  }
+
+  /// 从选集列表点某一集：不沿用旧源的分集，交给播放器按这一集重新匹配。
+  /// 这样「第 12 集」只会匹配到真的有第 12 集的源。
+  void _startFromEpisode(int index) {
+    final request = PlaybackRequest(
+      source: 'bgm',
+      metadata: {
+        'title': _detail.title,
+        'bgmId': ?_subjectId,
+        if (_detail.coverUrl.isNotEmpty) 'bgmImageUrl': _detail.coverUrl,
+        'score': ?_bgmInfo.score,
+        'bgmDetailData': ?_detailData,
+        if (_detail.logoUrl.isNotEmpty) 'logoUrl': _detail.logoUrl,
+      },
+    )..episodeIndex = index;
     NavigationService.toPlayback(context, request);
   }
 
@@ -418,6 +439,13 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
                               elevation: 0,
                               pinned: false,
                               foregroundColor: Colors.white,
+                              leading: widget.onClose == null
+                                  ? null
+                                  : IconButton(
+                                      icon: const Icon(Icons.close_rounded),
+                                      tooltip: '收起详情',
+                                      onPressed: widget.onClose,
+                                    ),
                               // 面板右上角有它自己的关闭按钮，标题别伸到那底下。
                               actions: widget.headerSliver == null
                                   ? null
@@ -556,6 +584,20 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
       ),
     ];
 
+    final subjectId = _subjectId;
+    // 播放页的详情面板顶部已有选集条，这里只在独立详情页出现。
+    if (subjectId != null && widget.headerSliver == null) {
+      tabs.add((
+        '选集',
+        (_) => _wrapTabContent(
+          AnimeDetailEpisodes(
+            subjectId: subjectId,
+            onEpisodeTap: _startFromEpisode,
+          ),
+        ),
+      ));
+    }
+
     tabs.add((
       '评论',
       (_) => _subjectId != null
@@ -570,10 +612,6 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
       ));
     }
 
-    if (_detail.backdrops.isNotEmpty || _detail.posters.length > 1) {
-      tabs.add(('图集', (_) => _buildGalleryTab()));
-    }
-
     tabs.add((
       '角色',
       (_) => _subjectId == null
@@ -581,7 +619,6 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
           : CharactersSection(subjectId: _subjectId!),
     ));
 
-    final subjectId = _subjectId;
     if (subjectId != null) {
       tabs.add((
         '相关',
@@ -661,113 +698,6 @@ class _AnimeDetailPlaceholderState extends State<AnimeDetailPlaceholder> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildGalleryTab() {
-    final backdrops = _detail.backdrops;
-    final posters = _detail.posters;
-    final imageWidth = MediaQuery.sizeOf(context).width > 800 ? 960 : 720;
-    final sectionStyle = TextStyle(
-      fontSize: 18,
-      fontWeight: FontWeight.w800,
-      color: _textColor,
-      letterSpacing: -0.4,
-    );
-
-    return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
-      slivers: [
-        if (backdrops.isNotEmpty)
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate((context, index) {
-                if (index == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: Text('剧照 / 背景图', style: sectionStyle),
-                  );
-                }
-                final url = backdrops[index - 1];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: CachedNetworkImage(
-                        imageUrl: url,
-                        fit: BoxFit.cover,
-                        memCacheWidth: imageWidth,
-                        placeholder: (context, url) => Container(
-                          width: double.infinity,
-                          height: double.infinity,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.surfaceContainerHighest,
-                        ),
-                        errorWidget: (context, url, error) =>
-                            const SizedBox.shrink(),
-                      ),
-                    ),
-                  ),
-                );
-              }, childCount: backdrops.length + 1),
-            ),
-          ),
-        if (posters.length > 1)
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              backdrops.isEmpty ? 16 : 8,
-              20,
-              24,
-            ),
-            sliver: SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('海报', style: sectionStyle),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    height: 220,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemExtent: 162,
-                      itemCount: posters.length,
-                      itemBuilder: (context, index) {
-                        final url = posters[index];
-                        return Align(
-                          alignment: Alignment.centerLeft,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: CachedNetworkImage(
-                              imageUrl: url,
-                              width: 150,
-                              height: 220,
-                              fit: BoxFit.cover,
-                              memCacheWidth: 400,
-                              placeholder: (context, url) => Container(
-                                width: 150,
-                                height: 220,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                              ),
-                              errorWidget: (context, url, error) =>
-                                  const SizedBox.shrink(),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
     );
   }
 

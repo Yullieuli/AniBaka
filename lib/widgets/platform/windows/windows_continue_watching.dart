@@ -2,6 +2,7 @@ import 'package:baka/app/navigation.dart';
 import 'package:baka/core/content_filter.dart';
 import 'package:baka/instance.dart';
 import 'package:baka/models/playback_request.dart';
+import 'package:baka/services/playback/airing_status.dart';
 import 'package:baka/services/playback/continue_watching.dart';
 import 'package:baka/services/playback/history_repository.dart';
 import 'package:baka/theme.dart';
@@ -11,7 +12,7 @@ import 'package:flutter/material.dart';
 
 /// 首页「继续观看」：最近看过的番，点一下从上次那一集接着播。
 /// 数据来自观看历史；历史落盘会自增 [HistoryRepository.revision]，回到首页自动刷新。
-class WindowsContinueWatching extends StatelessWidget {
+class WindowsContinueWatching extends StatefulWidget {
   const WindowsContinueWatching({
     required this.gutter,
     this.todaySubjects = const {},
@@ -20,11 +21,20 @@ class WindowsContinueWatching extends StatelessWidget {
 
   final double gutter;
 
-  /// 今天放送的 Bangumi 条目 id。命中的卡片标「今日更新」，并排到最前面。
+  /// 落在今天放送日历里的条目。只作为分集数据未就绪时的兜底：
+  /// 日历不区分停播，真正「今天有没有更新」以 [loadAiringFacts] 为准。
   final Set<int> todaySubjects;
 
   static const double posterWidth = 148;
   static const double cardHeight = posterWidth * 1.5;
+
+  @override
+  State<WindowsContinueWatching> createState() =>
+      _WindowsContinueWatchingState();
+}
+
+class _WindowsContinueWatchingState extends State<WindowsContinueWatching> {
+  final Set<int> _requested = {};
 
   @override
   Widget build(BuildContext context) {
@@ -41,16 +51,18 @@ class WindowsContinueWatching extends StatelessWidget {
             child: WindowsShelf(
               title: '继续观看',
               subtitle: '${entries.length} 部待续',
-              gutter: gutter,
-              height: cardHeight,
+              gutter: widget.gutter,
+              height: WindowsContinueWatching.cardHeight,
               itemCount: entries.length,
               itemBuilder: (context, index) {
                 final entry = entries[index];
+                final status = _describe(entry);
                 return SizedBox(
-                  width: posterWidth,
+                  width: WindowsContinueWatching.posterWidth,
                   child: _ContinueCard(
                     entry: entry,
-                    updatedToday: _isUpdatedToday(entry),
+                    badge: status.badge,
+                    hint: status.hint,
                   ),
                 );
               },
@@ -61,6 +73,35 @@ class WindowsContinueWatching extends StatelessWidget {
     );
   }
 
+  /// 卡片角标与提示：优先用分集 airdate 算出来的真实放送状态。
+  ({String? badge, String? hint}) _describe(ContinueWatchingEntry entry) {
+    final id = entry.bgmId;
+    if (id == null || id <= 0) return (badge: null, hint: null);
+    _ensureFacts(id);
+    final facts = peekAiringFacts(id);
+    if (facts != null) {
+      return describeAiring(facts, watchedSort: _watchedSort(entry));
+    }
+    // 分集还没回来（或离线）：沿用日历，只标今天。
+    final fallback = widget.todaySubjects.contains(id);
+    return (badge: fallback ? '今日更新' : null, hint: null);
+  }
+
+  /// 用户看到第几话（Bangumi 集号）。历史里没有集号时按「第几集」估。
+  num? _watchedSort(ContinueWatchingEntry entry) {
+    final raw = entry.record['bgmEpisodeSort'];
+    if (raw is num && raw > 0) return raw;
+    return entry.targetEpisodeIndex + 1;
+  }
+
+  void _ensureFacts(int id) {
+    if (_requested.contains(id)) return;
+    _requested.add(id);
+    loadAiringFacts(id).then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
   List<ContinueWatchingEntry> _entries() {
     final all = buildContinueWatching(historyRepository.getHistoryList());
     final visible = contentFilter.value
@@ -68,31 +109,46 @@ class WindowsContinueWatching extends StatelessWidget {
               .where((entry) => entry.record['nsfw'] != true)
               .toList(growable: false)
         : all;
-    // 今天有新一集排在前面；整部看完的沉到最后；其余按最近观看时间。
+    // 今天真有新集 > 有新集未看 > 待更新 > 看完的沉底；同档按最近观看时间。
     final sorted = [...visible];
     sorted.sort((a, b) {
       if (a.seriesFinished != b.seriesFinished) {
         return a.seriesFinished ? 1 : -1;
       }
-      final aUpdated = _isUpdatedToday(a);
-      final bUpdated = _isUpdatedToday(b);
-      if (aUpdated != bUpdated) return aUpdated ? -1 : 1;
+      final aRank = _rank(a);
+      final bRank = _rank(b);
+      if (aRank != bRank) return aRank.compareTo(bRank);
       return b.watchedAt.compareTo(a.watchedAt);
     });
     return sorted;
   }
 
-  bool _isUpdatedToday(ContinueWatchingEntry entry) {
+  int _rank(ContinueWatchingEntry entry) {
     final id = entry.bgmId;
-    return id != null && todaySubjects.contains(id);
+    if (id == null || id <= 0) return 2;
+    final facts = peekAiringFacts(id);
+    if (facts == null) {
+      return widget.todaySubjects.contains(id) ? 0 : 2;
+    }
+    if (facts.todaySort != null) return 0;
+    final latest = facts.latestAiredSort;
+    final watched = _watchedSort(entry);
+    if (latest != null && (watched == null || latest > watched)) return 1;
+    if (facts.nextAirDate != null) return 2;
+    return 3;
   }
 }
 
 class _ContinueCard extends StatefulWidget {
-  const _ContinueCard({required this.entry, required this.updatedToday});
+  const _ContinueCard({
+    required this.entry,
+    required this.badge,
+    required this.hint,
+  });
 
   final ContinueWatchingEntry entry;
-  final bool updatedToday;
+  final String? badge;
+  final String? hint;
 
   @override
   State<_ContinueCard> createState() => _ContinueCardState();
@@ -193,7 +249,7 @@ class _ContinueCardState extends State<_ContinueCard> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        entry.episodeLabel,
+                        widget.hint ?? entry.episodeLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -232,7 +288,7 @@ class _ContinueCardState extends State<_ContinueCard> {
                     ),
                   ),
                 ),
-                if (widget.updatedToday)
+                if (widget.badge case final badge?)
                   Positioned(
                     left: 8,
                     top: 8,
@@ -246,7 +302,7 @@ class _ContinueCardState extends State<_ContinueCard> {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        '今日更新',
+                        badge,
                         style: TextStyle(
                           color: colors.onPrimary,
                           fontSize: 10,

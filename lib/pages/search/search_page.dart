@@ -9,6 +9,7 @@ import 'package:baka/pages/source/source_management_page.dart';
 import 'package:baka/pages/search/search_controller.dart';
 import 'package:baka/app/navigation.dart';
 import 'package:baka/widgets/anime/post_card.dart';
+import 'package:baka/widgets/anime_detail/anime_detail_placeholder.dart';
 import 'package:flutter/material.dart';
 
 class SearchPage extends StatefulWidget {
@@ -37,6 +38,12 @@ class _SearchPageState extends State<SearchPage> {
   ]);
 
   bool get _isWindows => Instances.isDesktopPlatform;
+
+  /// 桌面端右侧展开的详情；null 表示还在看结果网格。
+  Map<String, dynamic>? _selected;
+
+  /// 左侧结果列占的宽度比例，可拖动分隔条调整。
+  double _splitFraction = 0.42;
 
   @override
   void initState() {
@@ -72,6 +79,7 @@ class _SearchPageState extends State<SearchPage> {
 
     if (value.trim().isEmpty) {
       _searchService.resetSearch();
+      if (_selected != null) setState(() => _selected = null);
       return;
     }
 
@@ -80,6 +88,7 @@ class _SearchPageState extends State<SearchPage> {
 
   Future<void> _search(String value) async {
     _debounce?.cancel();
+    if (_selected != null) setState(() => _selected = null);
     await _searchService.search(value);
   }
 
@@ -104,6 +113,9 @@ class _SearchPageState extends State<SearchPage> {
                             valueListenable: _searchService.showResultsNotifier,
                             builder: (context, showResults, _) {
                               if (showResults) {
+                                if (_isWindows && _selected != null) {
+                                  return _buildSplitArea();
+                                }
                                 return _buildResultsArea(isVertical: true);
                               }
                               return ValueListenableBuilder<List<String>>(
@@ -193,6 +205,113 @@ class _SearchPageState extends State<SearchPage> {
             : results;
       },
     );
+  }
+
+  /// 桌面端的分屏：结果收成一列放左边，点中的条目详情放右边。
+  /// 分隔条可以拖动，比例记在 [_splitFraction]。
+  Widget _buildSplitArea() {
+    final selected = _selected;
+    if (selected == null) return _buildResultsArea(isVertical: true);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final total = constraints.maxWidth;
+        final left = (total * _splitFraction).clamp(300.0, 620.0).toDouble();
+        return Row(
+          children: [
+            SizedBox(width: left, child: _buildCompactResults()),
+            _SplitHandle(
+              onDrag: (dx) {
+                if (total <= 0) return;
+                setState(() {
+                  _splitFraction = ((_splitFraction * total + dx) / total)
+                      .clamp(0.25, 0.65)
+                      .toDouble();
+                });
+              },
+            ),
+            Expanded(
+              child: ClipRect(
+                child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    size: Size(
+                      (total - left - _SplitHandle.width)
+                          .clamp(240.0, double.infinity)
+                          .toDouble(),
+                      constraints.maxHeight,
+                    ),
+                  ),
+                  child: AnimeDetailPlaceholder(
+                    key: ValueKey(
+                      'search_detail_${selected['bgmId'] ?? selected['title']}',
+                    ),
+                    data: selected,
+                    onClose: () => setState(() => _selected = null),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCompactResults() {
+    return ListenableBuilder(
+      listenable: _resultChanges,
+      builder: (context, _) {
+        final loading = _searchService.isLoadingNotifier.value;
+        final items = contentFilter.visibleItems(
+          _searchService.resultsNotifier.value,
+        );
+        if (loading && items.isEmpty) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (items.isEmpty) {
+          return const Center(child: Text('没有找到结果'));
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 24),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final data = items[index];
+            return _SearchResultRow(
+              data: data,
+              selected: _isSelected(data),
+              onTap: () => _selectResult(data),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  bool _isSelected(Map<String, dynamic> data) {
+    final selected = _selected;
+    if (selected == null) return false;
+    final a = selected['bgmId'];
+    final b = data['bgmId'];
+    if (a != null && b != null) return a.toString() == b.toString();
+    return selected['title'] == data['title'];
+  }
+
+  /// 点搜索结果：Bangumi 条目在右侧展开详情，其他源仍然直接开播。
+  void _selectResult(Map<String, dynamic> data) {
+    final source = data['source']?.toString();
+    if (source == 'bgm') {
+      setState(() {
+        _selected = {
+          'title': data['title'],
+          if (data['bgmId'] != null) 'bgmId': data['bgmId'],
+          if (data['bgmImageUrl'] != null) 'bgmImageUrl': data['bgmImageUrl'],
+          if (data['score'] != null) 'score': data['score'],
+        };
+      });
+      return;
+    }
+    if (source != null && source.isNotEmpty) {
+      _openSeries(data);
+    }
   }
 
   Widget _buildSearchBarContent() {
@@ -611,6 +730,11 @@ class _SearchPageState extends State<SearchPage> {
 
           if (source == 'bgm') {
             onTap = () {
+              // 桌面竖向布局用右侧分屏，不再整页跳转。
+              if (_isWindows && _searchService.isVerticalLayoutNotifier.value) {
+                _selectResult(data);
+                return;
+              }
               NavigationService.toDetail(context, {
                 'title': data['title'],
                 'bgmId': data['bgmId'],
@@ -661,6 +785,153 @@ class _SearchPageState extends State<SearchPage> {
         ),
       );
     }
+  }
+}
+
+class _SearchResultRow extends StatefulWidget {
+  const _SearchResultRow({
+    required this.data,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Map<String, dynamic> data;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_SearchResultRow> createState() => _SearchResultRowState();
+}
+
+class _SearchResultRowState extends State<_SearchResultRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final data = widget.data;
+    final score = data['score'];
+    final scoreText = score is num && score > 0
+        ? score.toStringAsFixed(1)
+        : null;
+    final subtitle = [
+      if ((data['subtitle']?.toString().trim() ?? '').isNotEmpty)
+        data['subtitle'],
+      if ((data['info']?.toString().trim() ?? '').isNotEmpty) data['info'],
+      if ((data['sourceDisplayName']?.toString().trim() ?? '').isNotEmpty)
+        data['sourceDisplayName'],
+    ].join(' · ');
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: widget.selected
+                ? colors.primary.withValues(alpha: 0.12)
+                : _hovered
+                ? colors.onSurface.withValues(alpha: 0.05)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.selected
+                  ? colors.primary.withValues(alpha: 0.45)
+                  : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: SizedBox(
+                  width: 54,
+                  height: 78,
+                  child: buildCachedImage(data, 54, 78),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      data['title']?.toString() ?? '未知标题',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                        color: widget.selected
+                            ? colors.primary
+                            : colors.onSurface,
+                      ),
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          height: 1.35,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (scoreText != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  scoreText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: colors.primary,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 分屏之间的拖动条。
+class _SplitHandle extends StatelessWidget {
+  const _SplitHandle({required this.onDrag});
+
+  static const double width = 7;
+
+  final ValueChanged<double> onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).dividerColor.withValues(alpha: 0.35);
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+        child: SizedBox(
+          width: width,
+          child: Center(child: Container(width: 1, color: color)),
+        ),
+      ),
+    );
   }
 }
 
