@@ -5,8 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'package:baka/personal_build.dart';
+
 class Instances {
-  static const String desktopDataFolderName = 'baka';
+  static const String desktopDataFolderName = kPersonalDataFolder;
   static const String _workspaceVersionKey = 'desktop_workspace_version';
   static const int _workspaceVersion = 1;
 

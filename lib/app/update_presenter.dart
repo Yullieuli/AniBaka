@@ -7,6 +7,7 @@ import 'package:baka/core/app_logger.dart';
 import 'package:baka/core/content_filter.dart';
 import 'package:baka/instance.dart';
 import 'package:baka/models/update_info.dart';
+import 'package:baka/personal_build.dart';
 import 'package:baka/widgets/dialog/update_dialog.dart';
 
 const _kAnnouncementContentKey = 'last_announcement_content';
@@ -27,6 +28,13 @@ abstract final class VersionService {
   static Future<void>? _checkTask;
 
   static Future<UpdateInfo> checkUpdateInfo() async {
+    // 私人构建不跟随官方版本线，直接视为无更新，避免被提示装回官方包。
+    if (kPersonalBuild && !kPersonalCheckOfficialUpdate) {
+      return UpdateInfo(
+        hasUpdate: false,
+        latestVersion: Instances.appVersion,
+      );
+    }
     final appInfo = await apiTransport.getJson<Map<String, dynamic>>(
       'https://version.anibaka.com/',
     );

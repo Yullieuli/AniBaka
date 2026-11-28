@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "Baka contributors" "\0"
-            VALUE "FileDescription", "Baka动漫" "\0"
+            VALUE "CompanyName", "Baka Yuri (personal build)" "\0"
+            VALUE "FileDescription", "Baka Yuri" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "baka_grey" "\0"
+            VALUE "InternalName", "baka_yuri" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2025-2026 Baka contributors. GPL-3.0-only." "\0"
-            VALUE "OriginalFilename", "baka_grey.exe" "\0"
-            VALUE "ProductName", "Baka动漫" "\0"
+            VALUE "OriginalFilename", "baka.exe" "\0"
+            VALUE "ProductName", "Baka Yuri" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

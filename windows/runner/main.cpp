@@ -12,14 +12,18 @@ auto bdw = bitsdojo_window_configure(BDW_CUSTOM_FRAME);
 
 namespace {
 
-constexpr wchar_t kAniBakaRegistryKey[] = L"Software\\AniBaka";
+// 私人构建的标识，与官方 AniBaka 完全隔离：注册表项、单实例锁、窗口标题
+// 三者都独立，保证两个版本可同时运行、互不激活对方的窗口。
+// 与 lib/personal_build.dart 中的常量一一对应，改名时两边一起改。
+constexpr wchar_t kAniBakaRegistryKey[] = L"Software\\BakaYuri";
 constexpr wchar_t kAniBakaInstanceMutex[] =
-    L"Local\\AniBakaBaka.AniBaka.SingleInstance";
+    L"Local\\Yuri.Baka.SingleInstance";
+constexpr wchar_t kPersonalWindowTitle[] = L"Baka Yuri";
 constexpr wchar_t kFlutterWindowClass[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr DWORD kGpuMigrationVersion = 1;
 
 static void ActivateExistingWindow() {
-  HWND window = ::FindWindowW(kFlutterWindowClass, L"Baka");
+  HWND window = ::FindWindowW(kFlutterWindowClass, kPersonalWindowTitle);
   if (window == nullptr || !::IsWindowVisible(window)) {
     return;
   }
@@ -141,13 +145,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   WriteStartupLog("Creating Flutter window");
-  if (!window.Create(L"Baka", origin, size)) {
+  if (!window.Create(kPersonalWindowTitle, origin, size)) {
     WriteStartupLog("Flutter window creation failed");
     const std::wstring error_message =
         L"应用启动失败。请将以下日志文件提供给开发者：\n\n" +
         GetStartupLogPath();
     ::MessageBoxW(
-        nullptr, error_message.c_str(), L"Baka 启动错误",
+        nullptr, error_message.c_str(), L"Baka Yuri 启动错误",
         MB_OK | MB_ICONERROR | MB_TOPMOST);
     if (instance_mutex != nullptr) {
       ::CloseHandle(instance_mutex);
